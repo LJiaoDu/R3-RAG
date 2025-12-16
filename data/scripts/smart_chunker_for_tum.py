@@ -73,21 +73,53 @@ class TUMDocumentChunker:
         """
         切分课程讲义PDF（30门长文档）
 
-        策略：标准分块（1500字符，150重叠）
-        原因：讲义通常很长（几万字符），必须切分
+        策略：
+        1. 优先按章节结构切分（Chapter, Kapitel, Section等）
+        2. 如果单个章节太长（>3000字符），在章节内部二次切分
+        3. 如果没有章节结构，回退到标准字符切分
 
         示例输入：
         "Kapitel 1: Suchverfahren
          1.1 Uninformierte Suche
          BFS (Breitensuche) ist ein Algorithmus...
-         ...（10000字符）"
+         Kapitel 2: Heuristiken
+         ..."
 
         示例输出：
-        块1: "Kapitel 1: Suchverfahren\n1.1 Uninformierte Suche..."
-        块2: "...BFS Implementierung..."
-        块3: "1.2 Informierte Suche\nA* Algorithmus..."
+        块1: "Kapitel 1: Suchverfahren\n1.1 Uninformierte Suche\n..."
+        块2: "Kapitel 2: Heuristiken\n..."
         """
-        return self._smart_chunk(text, chunk_size, overlap)
+        # 尝试识别章节结构
+        # 匹配常见章节标记（德语/英语）
+        chapter_patterns = [
+            r'^(?:Chapter|Kapitel|CHAPTER|KAPITEL)\s+\d+',  # Chapter 1, Kapitel 1
+            r'^\d+\.\s+[A-Z]',  # 1. Introduction
+            r'^#{1,3}\s+',  # Markdown格式: # Chapter
+            r'^(?:Lecture|Vorlesung)\s+\d+',  # Lecture 1
+        ]
+
+        combined_pattern = re.compile('|'.join(chapter_patterns), re.MULTILINE)
+        matches = list(combined_pattern.finditer(text))
+
+        if len(matches) >= 2:  # 至少找到2个章节标记
+            # 按章节切分
+            chunks = []
+            for i in range(len(matches)):
+                start = matches[i].start()
+                end = matches[i+1].start() if i+1 < len(matches) else len(text)
+                chapter_text = text[start:end].strip()
+
+                # 如果单个章节太长，在章节内部二次切分
+                if len(chapter_text) > 3000:
+                    sub_chunks = self._smart_chunk(chapter_text, chunk_size, overlap)
+                    chunks.extend(sub_chunks)
+                else:
+                    chunks.append(chapter_text)
+
+            return chunks if chunks else [text]
+        else:
+            # 没有找到章节结构，使用标准切分
+            return self._smart_chunk(text, chunk_size, overlap)
 
     def chunk_exercise(self, text: str, course_code: str) -> List[str]:
         """
